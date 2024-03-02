@@ -1,0 +1,87 @@
+name: yuzu-macos-build
+
+on: 
+  - push
+
+jobs:
+  build:
+    runs-on: [macos-14]
+    steps:
+      - name: Check out the repository to the runner
+        uses: actions/checkout@v4
+      - name: Install necessary dependencies
+        uses: tecolicom/actions-use-homebrew-tools@v1
+        with:
+          tools: md5sha1sum
+      - name: Update Homebrew
+        uses: tecolicom/actions-install-and-cache@v1
+        with:
+          run:  brew update
+          path: /usr/local
+      - uses: tecolicom/actions-use-homebrew-tools@v1
+        name: Install dependencies
+        with:
+          cache: false
+          tools: 'autoconf automake boost ccache cmake llvm@17 qt@6 ninja ffmpeg fmt glslang hidapi libtool libusb lz4 nlohmann-json openssl pkg-config sdl2 speexdsp vulkan-loader zlib zstd'
+      - name: Make the script files executable
+        run: chmod +x build_yuzu.sh
+      - name: Run the scripts
+        # uses: tecolicom/actions-install-and-cache@v1
+        # with:
+        run: |
+          ./build_yuzu.sh
+      - name: Build artifact
+        run: |
+          # Create folder
+          mkdir -p yuzu/build
+          cd yuzu/build
+          cmake .. -GNinja -DCMAKE_BUILD_TYPE=RELEASE -DYUZU_USE_BUNDLED_VCPKG=OFF -DYUZU_TESTS=OFF -DENABLE_WEB_SERVICE=OFF -DENABLE_LIBUSB=OFF -DSDL_ARMNEON=ON -DENABLE_QT6=ON -DYUZU_USE_EXTERNAL_VULKAN_HEADERS=OFF
+          ninja
+      - name: Install create-dmg
+        uses: tecolicom/actions-use-homebrew-tools@v1
+        with:
+          tools: "create-dmg"
+      - name: Convert app to dmg
+        run: |
+          mkdir -p release
+          create-dmg release/yuzu-$(date '+%Y-%m-%d').dmg yuzu/build/bin/yuzu.app
+      - name: Check release folder
+        id: create_file_path
+        working-directory: ./release/
+        run: |
+          echo $pwd
+          ls -l
+          FILE_PATH="${GITHUB_WORKSPACE}/release/yuzu-$(date '+%Y-%m-%d').dmg"
+          FILE_NAME="Yuzu-$(date '+%Y-%m-%d').dmg"
+          FILE_TAG="$(date '+%Y%m%d')"
+          echo "::set-output name=release_file::$FILE_PATH"
+          echo "::set-output name=release_name::$FILE_NAME"
+          echo "::set-output name=release_tag::$FILE_TAG"
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+        with:
+          tag_name: ${{ steps.create_file_path.outputs.release_tag }}
+          release_name: Yuzu ${{ steps.create_file_path.outputs.release_tag }}
+          draft: true
+          prerelease: false
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ${{ steps.create_file_path.outputs.release_file }}
+          asset_name: ${{ steps.create_file_path.outputs.release_name }}
+          asset_content_type: application/x-apple-diskimage
+      - name: Publish release
+        uses: eregon/publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ steps.create_release.outputs.id }}
+      # - name: Cleanup build dir
+      #   run: |
+      #     rm -rf ./yuzu/build
